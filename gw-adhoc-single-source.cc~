@@ -120,18 +120,9 @@ void SocketReceivePacket (Ptr<Socket> socket)
  //   }
 }
 
-void Tx(std::string context, Ptr<const Packet> packet, Ptr<Ipv4> ipv4, uint32_t interface)
+void Tx(Ptr<const Packet> packet, Ptr<Ipv4> ipv4, uint32_t interface)
 {
-    // std::cout<<context;
-    std::cout<<Simulator::Now().As(Time::S)<<" ";
-    std::cout<<ipv4->GetAddress(1,0).GetLocal()<<" send a packet!"<<std::endl;
-}
-
-void Rx(std::string context, Ptr<const Packet> packet, Ptr<Ipv4> ipv4, uint32_t interface)
-{
-    // std::cout<<context;
-    std::cout<<Simulator::Now().As(Time::S)<<" ";
-    std::cout<<ipv4->GetAddress(1,0).GetLocal()<<" recv a packet!"<<std::endl;
+    std::cout<<"send a packet!"<<std::endl;
 }
 
 static void GenerateTraffic (Ptr<Socket> socket, uint32_t pktSize, 
@@ -279,7 +270,7 @@ int main (int argc, char *argv[])
   Ptr<Socket> recvSink = Socket::CreateSocket (gw_nc.Get (sinkNode), tid);
   InetSocketAddress local = InetSocketAddress (Ipv4Address::GetAny (), 80);
   recvSink->Bind (local);
-  // recvSink->SetRecvCallback (MakeCallback (&SocketReceivePacket));
+  recvSink->SetRecvCallback (MakeCallback (&SocketReceivePacket));
 
   Ptr<Socket> source = Socket::CreateSocket (sta_nc.Get (sourceNode), tid);
   InetSocketAddress remote = InetSocketAddress (i.GetAddress (numStaNodes, 0), 80);
@@ -309,14 +300,8 @@ int main (int argc, char *argv[])
   AnimationInterface anim("./xml/gw-adhoc.xml");
 
   std::ostringstream oss;
-  oss << "/NodeList/0/$ns3::Ipv4L3Protocol/Tx";
-  // Config::ConnectWithoutContext(oss.str(), MakeCallback(&Tx));
+  oss << "/NodeList/*/$ns3::Ipv4L3Protocol/*/Tx";
   Config::Connect(oss.str(), MakeCallback(&Tx));
-
-  // oss.clear();
-  oss.str("");
-  oss << "/NodeList/16/$ns3::Ipv4L3Protocol/Rx";
-  Config::Connect(oss.str(), MakeCallback(&Rx));
 
   // Output what we are doing
   NS_LOG_UNCOND ("Testing from node " << sourceNode << " to " << numStaNodes << " with grid distance " << distance);

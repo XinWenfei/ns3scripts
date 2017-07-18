@@ -1,0 +1,156 @@
+#include "ns3/core-module.h"
+#include "ns3/network-module.h"
+#include "ns3/applications-module.h"
+#include "ns3/wifi-module.h"
+#include "ns3/mobility-module.h"
+#include "ns3/internet-module.h"
+#include "ns3/netanim-module.h"
+#include "ns3/tap-bridge-module.h"
+
+// Default Network Topology
+//
+// Number of wifi or csma nodes can be increased up to 250
+//                          
+// -------------------------|----------------------------
+//  +----------+
+//  | external |
+//  |  Linux   |
+//  |   Host   |
+//  |          |
+//  | "ns3tap" |
+//  +----------+
+//       |
+//       |                  
+//       |   +----------+   
+//       +---|tap bridge|      Wifi 192.168.1.0        
+//           +----------+              AP               
+//           | station  |    *    *    *    *    *    * 
+//           +----------+    |    |    |    |    |    |
+//                n0        n1   n2   n3   n4   n5   n6
+//                   
+
+using namespace ns3;
+//using namespace std;
+#define SOCK_COUNT 5
+#define PORT       5000
+
+NS_LOG_COMPONENT_DEFINE ("socketClient");
+
+int main(int argc, char *argv[])
+{
+    uint32_t nodeCount = 7;
+    uint32_t apNodeId = 3;
+    bool tracing = true;
+    bool verbose = false;
+    uint32_t simTime = 100; //s
+    std::string phyMode = "HtMcs0";
+    std::string tapMode = "UseLocal";
+    std::string tapName = "ns3tap";
+
+    GlobalValue::Bind ("SimulatorImplementationType", StringValue ("ns3::RealtimeSimulatorImpl"));
+    GlobalValue::Bind ("ChecksumEnabled", BooleanValue (true));
+    
+    if (verbose)
+    {
+      LogComponentEnable ("UdpEchoClientApplication", LOG_LEVEL_INFO);
+      LogComponentEnable ("UdpEchoServerApplication", LOG_LEVEL_INFO);
+      LogComponentEnable ("socketClient", LOG_LEVEL_INFO);
+    }
+
+    NS_LOG_INFO("Create Nodes");
+    NodeContainer stanc, apnc, nc;
+    nc.Create(nodeCount);
+
+    uint16_t i=0;
+    for(i; i<nc.GetN(); i++){
+        if(i!=3)
+            stanc.Add(nc.Get(i));
+        else
+            apnc.Add(nc.Get(i));
+    }
+    
+    YansWifiChannelHelper channel = YansWifiChannelHelper::Default();
+    YansWifiPhyHelper phy = YansWifiPhyHelper::Default();
+    phy.SetChannel( channel.Create() );
+    phy.Set("ChannelNumber", UintegerValue(1));
+
+    WifiHelper wifi;
+    wifi.SetStandard(WIFI_PHY_STANDARD_80211n_2_4GHZ);
+    wifi.SetRemoteStationManager("ns3::ConstantRateWifiManager",
+            "DataMode", StringValue(phyMode),
+            "ControlMode", StringValue(phyMode));
+
+    WifiMacHelper mac;
+    Ssid ssid = Ssid("ssid");
+
+    NS_LOG_INFO("Set wireless network station mac info");
+    mac.SetType("ns3::StaWifiMac",
+            "Ssid", SsidValue(ssid));
+    NetDeviceContainer standc;
+    standc = wifi.Install(phy, mac, stanc);
+
+    NS_LOG_INFO("Set wireless network's ap mac info");
+    mac.SetType("ns3::ApWifiMac",
+            "Ssid", SsidValue(ssid));
+    NetDeviceContainer apndc;
+    apndc = wifi.Install(phy, mac, apnc);
+
+    InternetStackHelper stack;
+    stack.Install (nc);
+
+    NS_LOG_INFO("Set all nodes' ip address");
+    
+    Ipv4AddressHelper addr;
+
+    addr.SetBase("10.1.1.0", "255.255.255.0");
+    Ipv4InterfaceContainer staIntf, apIntf;
+    apIntf =  addr.Assign(apndc) ;
+    staIntf = addr.Assign(standc);
+
+    NS_LOG_INFO("Output ip address");
+
+    std::cout<<apnc.Get(0)->GetObject<Ipv4>()->GetAddress(1,0).GetLocal()<<std::endl;
+    for(i=0; i<stanc.GetN(); i++){
+        Ptr<Ipv4> ptr_ipv4 = stanc.Get(i)->GetObject<Ipv4>();
+        std::cout<<ptr_ipv4->GetAddress(1,0).GetLocal()<<std::endl;
+    }
+
+    NS_LOG_INFO("Set mobility model and position allocator");
+    MobilityHelper mobility;
+
+    mobility.SetMobilityModel("ns3::ConstantPositionMobilityModel");
+    Ptr<ListPositionAllocator> positionAlloc = CreateObject<ListPositionAllocator> ();
+    for(i=0; i<nc.GetN(); i++)
+        positionAlloc->Add (Vector (i*10, 0.0, 0.0));
+    mobility.SetPositionAllocator(positionAlloc);
+    mobility.Install(nc);
+
+    //TypeId tid = TypeId::LookupByName("ns3::TcpSocketFactory");
+    //Ptr<Socket> source[SOCK_COUNT];
+    //for(i=0; i<stanc.GetN(); i++){
+    //    // source[i] = Socket::CreateSocket( stanc.Get(i), tid);
+    //    // cout<<staIntf.GetAddress(i, 0)<<endl;
+    //    InetSocketAddress remote = InetSocketAddress(staIntf.GetAddress(i, 0), PORT);
+    //    // source[i]->Connect(remote);
+    //}
+    
+    NS_LOG_INFO("Create tap bridge");
+    TapBridgeHelper tapBridge;
+    tapBridge.SetAttribute ("Mode", StringValue(tapMode));
+    tapBridge.SetAttribute ("DeviceName", StringValue (tapName));
+    tapBridge.Install (stanc.Get (0), standc.Get (0));
+
+
+    Ipv4GlobalRoutingHelper::PopulateRoutingTables ();
+
+    if(tracing == true){
+        phy.EnablePcapAll("pcap/socketClient");
+    }
+
+    AnimationInterface anim("xml/socketClient");
+
+    Simulator::Stop (Seconds(simTime));
+    Simulator::Run();
+    Simulator::Destroy();
+    return 0;
+}

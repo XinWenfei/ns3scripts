@@ -14,6 +14,7 @@
 #include "ns3/seq-ts-header.h"
 #include "ns3/propagation-delay-model.h"
 #include "ns3/propagation-loss-model.h"
+#include "ns3/netanim-module.h"
 
 #include <iostream>
 #include <fstream>
@@ -53,6 +54,28 @@ void ReceivePacket(Ptr<Socket> socket)
     }
 }
 
+static void GenerateTraffic (Ptr<Socket> socket, uint32_t pktSize, 
+                             uint32_t pktCount, Time pktInterval )
+{
+  SeqTsHeader seqTs;
+  seqTs.SetSeq (m_sent);
+  Ptr<Packet> p = Create<Packet> (pktSize);
+  p->AddHeader (seqTs);
+  
+  if (pktCount > 0)
+    {
+      //socket->Send (Create<Packet> (pktSize));
+      socket->Send (p);
+      ++m_sent;
+      Simulator::Schedule (pktInterval, &GenerateTraffic, 
+                           socket, pktSize,pktCount-1, pktInterval);
+    }
+  else
+    {
+      socket->Close ();
+    }
+}
+
 int main(int argc, char* argv[])
 {
 	//Set all the default time unit is nanosecond
@@ -62,6 +85,7 @@ int main(int argc, char* argv[])
 	uint32_t packetSize = 1024;
 	uint32_t numPackets = 20;
 	uint32_t numNodes = 25;
+    uint32_t distance = 200; //meter
     //waiting time before sending next packet
 	double interval = 0.10;   
 	bool TRACING_TR = false;
@@ -160,9 +184,9 @@ int main(int argc, char* argv[])
     mobility.SetPositionAllocator("ns3::GridPositionAllocator",
             "MinX", DoubleValue(0),
             "MinY", DoubleValue(0),
-            "DeltaX", DoubleValue(100),
-            "DeltaY", DoubleValue(100),
-            "GridWidth", UintegerValue(10),
+            "DeltaX", DoubleValue(distance),
+            "DeltaY", DoubleValue(distance),
+            "GridWidth", UintegerValue(5),
             "LayoutType", StringValue("RowFirst")
             );
     mobility.SetMobilityModel("ns3::ConstantPositionMobilityModel");
@@ -237,12 +261,21 @@ int main(int argc, char* argv[])
     if(ENABLE_LOG_INFO)
         NS_LOG_INFO("Set route trace ...");
     if(TRACING_ROUTE){
-        Ptr<OutputStreamWrapper> routingStream = Create<OutputStreamWrapper>("./routes/"+fileNameRoot+".routes", ios::out);
-        olsr.PrintRoutingTableAllEvery (Seconds(2), routingStream);
-        Ptr<OutputStreamWrapper> neighborStream = Create<OutputStreamWrapper>("./routes/"+fileNameRoot+".neighbors", ios::out);
-        olsr.PrintRoutingTableAllEvery (Seconds(2), neighborStream);
+        // Ptr<OutputStreamWrapper> routingStream = Create<OutputStreamWrapper>("./route/"+fileNameRoot+".routes", ios::out);
+        // olsr.PrintRoutingTableAllEvery (Seconds(2), routingStream);
+        // Ptr<OutputStreamWrapper> neighborStream = Create<OutputStreamWrapper>("./route/"+fileNameRoot+".neighbors", ios::out);
+        // olsr.PrintRoutingTableAllEvery (Seconds(2), neighborStream);
     }
 
+    Simulator::Schedule(Seconds(30.0), &GenerateTraffic,
+            source, packetSize, numPackets, interPacketInterval);
+
+    AnimationInterface anim("xml/simpleWirelessTcp.xml");
+
+
+    Simulator::Stop (Seconds(50.0));
+    Simulator::Run ();
+    Simulator::Destroy ();
 
     return 0;
 } 

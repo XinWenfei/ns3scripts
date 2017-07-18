@@ -26,29 +26,29 @@
 // The default layout is like this, on a 2-D grid.
 //
 //Network topology
-//   |  200m  |---------800m----------|  200m  |
+//   | 200m  |---------800m----------| 200m  |
 //
-//   *        *                       *        *-
-//                                              2
-//                                              0
-//                                              0
-//                                              m
-//   *        *                       *        *-
-//
-//
-//
-//                       (gw)
-//                        *(600,600)
+//   *       *                       *       *-
+//                                            2
+//                                            0
+//                                            0
+//                                            m
+//   *       *                       *       *-
 //
 //
 //
-//
-//   *        *                       *        *
+//                      (gw)
+//                       *(600,600)
 //
 //
 //
 //
-//   *        *                       *        *
+//   *       *                       *       *
+//
+//
+//
+//
+//   *       *                       *       *
 //
 // the layout is affected by the parameters given to GridPositionAllocator;
 // by default, GridWidth is 5 and numStaNodes is 25..
@@ -100,8 +100,6 @@
 #include "ns3/netanim-module.h"
 #include "ns3/global-value.h"
 #include "ns3/simple-ref-count.h"
-#include "ns3/traced-value.h"
-#include "ns3/trace-source-accessor.h"
 
 #include <iostream>
 #include <fstream>
@@ -112,26 +110,12 @@ using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE ("WifiSimpleAdhocGrid");
 
-void SocketReceivePacket (Ptr<Socket> socket)
+void ReceivePacket (Ptr<Socket> socket)
 {
- // while (socket->Recv ())
- //   {
+  while (socket->Recv ())
+    {
       NS_LOG_UNCOND ("Received one packet!");
- //   }
-}
-
-void Tx(std::string context, Ptr<const Packet> packet, Ptr<Ipv4> ipv4, uint32_t interface)
-{
-    // std::cout<<context;
-    std::cout<<Simulator::Now().As(Time::S)<<" ";
-    std::cout<<ipv4->GetAddress(1,0).GetLocal()<<" send a packet!"<<std::endl;
-}
-
-void Rx(std::string context, Ptr<const Packet> packet, Ptr<Ipv4> ipv4, uint32_t interface)
-{
-    // std::cout<<context;
-    std::cout<<Simulator::Now().As(Time::S)<<" ";
-    std::cout<<ipv4->GetAddress(1,0).GetLocal()<<" recv a packet!"<<std::endl;
+    }
 }
 
 static void GenerateTraffic (Ptr<Socket> socket, uint32_t pktSize, 
@@ -139,9 +123,7 @@ static void GenerateTraffic (Ptr<Socket> socket, uint32_t pktSize,
 {
   if (pktCount > 0)
     {
-        int sendbytes = socket->Send (Create<Packet> (pktSize));
-        //sendCb(socket, socket->GetTxAvailable());
-      //std::cout<<"Send "<<sendbytes<<" bytes!"<<std::endl;
+      socket->Send (Create<Packet> (pktSize));
       Simulator::Schedule (pktInterval, &GenerateTraffic, 
                            socket, pktSize,pktCount-1, pktInterval);
     }
@@ -159,13 +141,11 @@ int main (int argc, char *argv[])
   double distance = 200;  // m
   double distance2= 600;
   uint32_t packetSize = 1000; // bytes
-  uint32_t numPackets = 10;
+  uint32_t numPackets = 1;
   uint32_t numStaNodes = 16;  
   uint32_t numGwNodes = 1;
   uint32_t sinkNode = 0;
   uint32_t sourceNode = 0;
-  uint32_t simTime = 45;
-  uint32_t routeTime = 30;
   double interval = 1.0; // seconds
   bool verbose = false;
   bool tracing = true;
@@ -270,7 +250,7 @@ int main (int argc, char *argv[])
   internet.Install ( gw_nc);
 
   Ipv4AddressHelper ipv4;
-  //NS_LOG_INFO ("Assign IP Addresses.");
+  NS_LOG_INFO ("Assign IP Addresses.");
   ipv4.SetBase ("10.1.1.0", "255.255.255.0");
   Ipv4InterfaceContainer i = ipv4.Assign (sta_devices);
   i.Add( ipv4.Assign(gw_devices));
@@ -279,7 +259,7 @@ int main (int argc, char *argv[])
   Ptr<Socket> recvSink = Socket::CreateSocket (gw_nc.Get (sinkNode), tid);
   InetSocketAddress local = InetSocketAddress (Ipv4Address::GetAny (), 80);
   recvSink->Bind (local);
-  // recvSink->SetRecvCallback (MakeCallback (&SocketReceivePacket));
+  recvSink->SetRecvCallback (MakeCallback (&ReceivePacket));
 
   Ptr<Socket> source = Socket::CreateSocket (sta_nc.Get (sourceNode), tid);
   InetSocketAddress remote = InetSocketAddress (i.GetAddress (numStaNodes, 0), 80);
@@ -302,26 +282,16 @@ int main (int argc, char *argv[])
     }
 
   // Give OLSR time to converge-- 30 seconds perhaps
-  Simulator::Schedule (Seconds (routeTime), &GenerateTraffic, 
+  Simulator::Schedule (Seconds (30.0), &GenerateTraffic, 
                        source, packetSize, numPackets, interPacketInterval);
 
   // Output the xml file
   AnimationInterface anim("./xml/gw-adhoc.xml");
 
-  std::ostringstream oss;
-  oss << "/NodeList/0/$ns3::Ipv4L3Protocol/Tx";
-  // Config::ConnectWithoutContext(oss.str(), MakeCallback(&Tx));
-  Config::Connect(oss.str(), MakeCallback(&Tx));
-
-  // oss.clear();
-  oss.str("");
-  oss << "/NodeList/16/$ns3::Ipv4L3Protocol/Rx";
-  Config::Connect(oss.str(), MakeCallback(&Rx));
-
   // Output what we are doing
   NS_LOG_UNCOND ("Testing from node " << sourceNode << " to " << numStaNodes << " with grid distance " << distance);
 
-  Simulator::Stop (Seconds (simTime));
+  Simulator::Stop (Seconds (33.0));
   Simulator::Run ();
   Simulator::Destroy ();
 

@@ -25,33 +25,14 @@
 //
 // The default layout is like this, on a 2-D grid.
 //
-//Network topology
-//   |  200m  |---------800m----------|  200m  |
-//
-//   *        *                       *        *-
-//                                              2
-//                                              0
-//                                              0
-//                                              m
-//   *        *                       *        *-
-//
-//
-//
-//                       (gw)
-//                        *(600,600)
-//
-//
-//
-//
-//   *        *                       *        *
-//
-//
-//
-//
-//   *        *                       *        *
+// n20  n21  n22  n23  n24
+// n15  n16  n17  n18  n19
+// n10  n11  n12  n13  n14
+// n5   n6   n7   n8   n9
+// n0   n1   n2   n3   n4
 //
 // the layout is affected by the parameters given to GridPositionAllocator;
-// by default, GridWidth is 5 and numStaNodes is 25..
+// by default, GridWidth is 5 and numNodes is 25..
 //
 // There are a number of command-line options available to control
 // the default behavior.  The list of available command-line options
@@ -99,9 +80,6 @@
 #include "ns3/ipv4-list-routing-helper.h"
 #include "ns3/netanim-module.h"
 #include "ns3/global-value.h"
-#include "ns3/simple-ref-count.h"
-#include "ns3/traced-value.h"
-#include "ns3/trace-source-accessor.h"
 
 #include <iostream>
 #include <fstream>
@@ -112,26 +90,12 @@ using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE ("WifiSimpleAdhocGrid");
 
-void SocketReceivePacket (Ptr<Socket> socket)
+void ReceivePacket (Ptr<Socket> socket)
 {
- // while (socket->Recv ())
- //   {
+  while (socket->Recv ())
+    {
       NS_LOG_UNCOND ("Received one packet!");
- //   }
-}
-
-void Tx(std::string context, Ptr<const Packet> packet, Ptr<Ipv4> ipv4, uint32_t interface)
-{
-    // std::cout<<context;
-    std::cout<<Simulator::Now().As(Time::S)<<" ";
-    std::cout<<ipv4->GetAddress(1,0).GetLocal()<<" send a packet!"<<std::endl;
-}
-
-void Rx(std::string context, Ptr<const Packet> packet, Ptr<Ipv4> ipv4, uint32_t interface)
-{
-    // std::cout<<context;
-    std::cout<<Simulator::Now().As(Time::S)<<" ";
-    std::cout<<ipv4->GetAddress(1,0).GetLocal()<<" recv a packet!"<<std::endl;
+    }
 }
 
 static void GenerateTraffic (Ptr<Socket> socket, uint32_t pktSize, 
@@ -139,9 +103,7 @@ static void GenerateTraffic (Ptr<Socket> socket, uint32_t pktSize,
 {
   if (pktCount > 0)
     {
-        int sendbytes = socket->Send (Create<Packet> (pktSize));
-        //sendCb(socket, socket->GetTxAvailable());
-      //std::cout<<"Send "<<sendbytes<<" bytes!"<<std::endl;
+      socket->Send (Create<Packet> (pktSize));
       Simulator::Schedule (pktInterval, &GenerateTraffic, 
                            socket, pktSize,pktCount-1, pktInterval);
     }
@@ -156,16 +118,12 @@ int main (int argc, char *argv[])
 {
     LogComponentEnable("WifiSimpleAdhocGrid", LOG_LEVEL_INFO);
   std::string phyMode ("DsssRate1Mbps");
-  double distance = 200;  // m
-  double distance2= 600;
+  double distance = 655;  // m
   uint32_t packetSize = 1000; // bytes
-  uint32_t numPackets = 10;
-  uint32_t numStaNodes = 16;  
-  uint32_t numGwNodes = 1;
-  uint32_t sinkNode = 0;
+  uint32_t numPackets = 1;
+  uint32_t numNodes = 25;  // by default, 5x5
+  uint32_t sinkNode = 24;
   uint32_t sourceNode = 0;
-  uint32_t simTime = 45;
-  uint32_t routeTime = 30;
   double interval = 1.0; // seconds
   bool verbose = false;
   bool tracing = true;
@@ -179,7 +137,7 @@ int main (int argc, char *argv[])
   cmd.AddValue ("interval", "interval (seconds) between packets", interval);
   cmd.AddValue ("verbose", "turn on all WifiNetDevice log components", verbose);
   cmd.AddValue ("tracing", "turn on ascii and pcap tracing", tracing);
-  cmd.AddValue ("numStaNodes", "number of nodes", numStaNodes);
+  cmd.AddValue ("numNodes", "number of nodes", numNodes);
   cmd.AddValue ("sinkNode", "Receiver node number", sinkNode);
   cmd.AddValue ("sourceNode", "Sender node number", sourceNode);
 
@@ -199,9 +157,8 @@ int main (int argc, char *argv[])
   Config::SetDefault ("ns3::WifiRemoteStationManager::NonUnicastMode", 
                       StringValue (phyMode));
 
-  NodeContainer sta_nc, gw_nc;
-  sta_nc.Create (numStaNodes);
-  gw_nc.Create  (numGwNodes);
+  NodeContainer c;
+  c.Create (numNodes);
 
   // The below set of helpers will help us to put together the wifi NICs we want
   WifiHelper wifi;
@@ -229,32 +186,18 @@ int main (int argc, char *argv[])
                                 "ControlMode",StringValue (phyMode));
   // Set it to adhoc mode
   wifiMac.SetType ("ns3::AdhocWifiMac");
-  NetDeviceContainer sta_devices = wifi.Install (wifiPhy, wifiMac, sta_nc);
-  NetDeviceContainer  gw_devices = wifi.Install (wifiPhy, wifiMac,  gw_nc);
+  NetDeviceContainer devices = wifi.Install (wifiPhy, wifiMac, c);
 
   MobilityHelper mobility;
-  // mobility.SetPositionAllocator ("ns3::GridPositionAllocator",
-  //                                "MinX", DoubleValue (0.0),
-  //                                "MinY", DoubleValue (0.0),
-  //                                "DeltaX", DoubleValue (distance),
-  //                                "DeltaY", DoubleValue (distance),
-  //                                "GridWidth", UintegerValue (5),
-  //                                "LayoutType", StringValue ("RowFirst"));
-  Ptr<ListPositionAllocator> positionAlloc = CreateObject<ListPositionAllocator> ();
-  for(uint32_t i=0; i<4; i++){
-    for(uint32_t j=0; j<4; j++){
-      positionAlloc->Add (Vector (j*distance+(uint32_t)(j/2)*distance2, i*distance+(uint32_t)(i/2)*distance2, 0));
-    }
-  }
-  mobility.SetPositionAllocator(positionAlloc);
+  mobility.SetPositionAllocator ("ns3::GridPositionAllocator",
+                                 "MinX", DoubleValue (0.0),
+                                 "MinY", DoubleValue (0.0),
+                                 "DeltaX", DoubleValue (distance),
+                                 "DeltaY", DoubleValue (distance),
+                                 "GridWidth", UintegerValue (5),
+                                 "LayoutType", StringValue ("RowFirst"));
   mobility.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
-  mobility.Install (sta_nc);
-
-  // Unref(positionAlloc);
-  positionAlloc = CreateObject<ListPositionAllocator> ();
-  positionAlloc->Add (Vector (distance2, distance2, 0));
-  mobility.SetPositionAllocator(positionAlloc);
-  mobility.Install (gw_nc);
+  mobility.Install (c);
 
   // Enable OLSR
   OlsrHelper olsr;
@@ -266,62 +209,50 @@ int main (int argc, char *argv[])
 
   InternetStackHelper internet;
   internet.SetRoutingHelper (list); // has effect on the next Install ()
-  internet.Install (sta_nc);
-  internet.Install ( gw_nc);
+  internet.Install (c);
 
   Ipv4AddressHelper ipv4;
-  //NS_LOG_INFO ("Assign IP Addresses.");
+  NS_LOG_INFO ("Assign IP Addresses.");
   ipv4.SetBase ("10.1.1.0", "255.255.255.0");
-  Ipv4InterfaceContainer i = ipv4.Assign (sta_devices);
-  i.Add( ipv4.Assign(gw_devices));
+  Ipv4InterfaceContainer i = ipv4.Assign (devices);
 
   TypeId tid = TypeId::LookupByName ("ns3::UdpSocketFactory");
-  Ptr<Socket> recvSink = Socket::CreateSocket (gw_nc.Get (sinkNode), tid);
+  Ptr<Socket> recvSink = Socket::CreateSocket (c.Get (sinkNode), tid);
   InetSocketAddress local = InetSocketAddress (Ipv4Address::GetAny (), 80);
   recvSink->Bind (local);
-  // recvSink->SetRecvCallback (MakeCallback (&SocketReceivePacket));
+  recvSink->SetRecvCallback (MakeCallback (&ReceivePacket));
 
-  Ptr<Socket> source = Socket::CreateSocket (sta_nc.Get (sourceNode), tid);
-  InetSocketAddress remote = InetSocketAddress (i.GetAddress (numStaNodes, 0), 80);
+  Ptr<Socket> source = Socket::CreateSocket (c.Get (sourceNode), tid);
+  InetSocketAddress remote = InetSocketAddress (i.GetAddress (sinkNode, 0), 80);
   source->Connect (remote);
 
   if (tracing == true)
     {
         std::cout<<"if node enable checksum:"<<Node::ChecksumEnabled()<<std::endl;
-      // AsciiTraceHelper ascii;
-      // wifiPhy.EnableAsciiAll (ascii.CreateFileStream ("tr/gw-adhoc.tr"));
+      AsciiTraceHelper ascii;
+      wifiPhy.EnableAsciiAll (ascii.CreateFileStream ("tr/wifi-simple-adhoc-grid.tr"));
       //wifiPhy.EnablePcap ("./pcap/wifi-simple-adhoc2", devices);
-      wifiPhy.EnablePcapAll("./pcap/gw-adhoc");
+      wifiPhy.EnablePcapAll("./pcap/wifiSimpleAdhoc");
       // Trace routing tables
-      // Ptr<OutputStreamWrapper> routingStream = Create<OutputStreamWrapper> ("route/wifi-simple-adhoc-grid.routes", std::ios::out);
-      // olsr.PrintRoutingTableAllEvery (Seconds (2), routingStream);
-      // Ptr<OutputStreamWrapper> neighborStream = Create<OutputStreamWrapper> ("route/wifi-simple-adhoc-grid.neighbors", std::ios::out);
-      // olsr.PrintNeighborCacheAllEvery (Seconds (2), neighborStream);
+      Ptr<OutputStreamWrapper> routingStream = Create<OutputStreamWrapper> ("route/wifi-simple-adhoc-grid.routes", std::ios::out);
+      olsr.PrintRoutingTableAllEvery (Seconds (2), routingStream);
+      Ptr<OutputStreamWrapper> neighborStream = Create<OutputStreamWrapper> ("route/wifi-simple-adhoc-grid.neighbors", std::ios::out);
+      olsr.PrintNeighborCacheAllEvery (Seconds (2), neighborStream);
 
       // To do-- enable an IP-level trace that shows forwarding events only
     }
 
   // Give OLSR time to converge-- 30 seconds perhaps
-  Simulator::Schedule (Seconds (routeTime), &GenerateTraffic, 
+  Simulator::Schedule (Seconds (30.0), &GenerateTraffic, 
                        source, packetSize, numPackets, interPacketInterval);
 
   // Output the xml file
-  AnimationInterface anim("./xml/gw-adhoc.xml");
-
-  std::ostringstream oss;
-  oss << "/NodeList/0/$ns3::Ipv4L3Protocol/Tx";
-  // Config::ConnectWithoutContext(oss.str(), MakeCallback(&Tx));
-  Config::Connect(oss.str(), MakeCallback(&Tx));
-
-  // oss.clear();
-  oss.str("");
-  oss << "/NodeList/16/$ns3::Ipv4L3Protocol/Rx";
-  Config::Connect(oss.str(), MakeCallback(&Rx));
+  AnimationInterface anim("./xml/wifi-simple-adhoc-grid.xml");
 
   // Output what we are doing
-  NS_LOG_UNCOND ("Testing from node " << sourceNode << " to " << numStaNodes << " with grid distance " << distance);
+  NS_LOG_UNCOND ("Testing from node " << sourceNode << " to " << sinkNode << " with grid distance " << distance);
 
-  Simulator::Stop (Seconds (simTime));
+  Simulator::Stop (Seconds (33.0));
   Simulator::Run ();
   Simulator::Destroy ();
 

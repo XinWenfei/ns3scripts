@@ -1,0 +1,25 @@
+#include "ns3/core-module.h"
+
+using namespace ns3;
+using namespace std;
+
+class MyCb{
+    public:
+        int CbTwo(double a){
+            cout<<"invoke cbTwo a="<<a<<endl;
+            return -5;
+        }
+};
+
+int main()
+{
+    Callback<int, double> two;
+    MyCb mycb;
+    //two = MakeCallback(&MyCb::CbTwo, &mycb);
+    two = MakeCallback(&MyCb::CbTwo);
+    NS_ASSERT(!two.IsNull());
+    double ret;
+    ret = two( 20.0);
+
+    cout<<"retvalue is: "<<ret<<endl;
+}
