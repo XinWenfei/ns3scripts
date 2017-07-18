@@ -1,0 +1,115 @@
+#include "ns3/core-module.h"
+#include "ns3/internet-module.h"
+#include "ns3/network-module.h"
+#include "ns3/applications-module.h"
+#include "ns3/wifi-module.h"
+#include "ns3/mesh-module.h"
+#include "ns3/mobility-module.h"
+#include "ns3/mesh-helper.h"
+#include "ns3/netanim-module.h"
+#include "ns3/csma-module.h"
+
+#include <iostream>
+#include <sstream>
+#include <fstream>
+
+/*
+ *Network topology:
+ n1       n2       n3
+ |         |        |
+ ===========        *
+ .1        .2       .3
+    csma       mesh
+ */
+using namespace ns3;
+using namespace std;
+
+NS_LOG_COMPONENT_DEFINE ("CsmaMeshTest");
+
+int main(int argc, char* argv[])
+{
+
+    ns3::PacketMetadata::Enable();
+    LogComponentEnable("CsmaMeshTest", LOG_LEVEL_INFO);
+  LogComponentEnable ("UdpEchoClientApplication", LOG_LEVEL_INFO);
+  LogComponentEnable ("UdpEchoServerApplication", LOG_LEVEL_INFO);
+    GlobalValue::Bind("ChecksumEnabled", BooleanValue(true));
+
+    NodeContainer csmaNodes;
+    csmaNodes.Create(2);
+    Ptr<Node> meshNode = CreateObject<Node>();
+
+    CsmaHelper csma;
+csma.SetChannelAttribute("DataRate", StringValue("100Mbps"));
+  csma.SetChannelAttribute("Delay", TimeValue(NanoSeconds(6560)));
+
+  NetDeviceContainer csmaDevices;
+  csmaDevices = csma.Install(csmaNodes);
+
+  InternetStackHelper stack;
+  stack.Install(csmaNodes);
+  stack.Install(meshNode);
+
+  YansWifiChannelHelper channel = YansWifiChannelHelper::Default();
+  YansWifiPhyHelper phy = YansWifiPhyHelper::Default();
+  phy.SetChannel(channel.Create());
+
+  MeshHelper mesh = MeshHelper::Default();
+  mesh.SetStackInstaller("ns3::Dot11sStack");
+  mesh.SetSpreadInterfaceChannels(MeshHelper::SPREAD_CHANNELS);
+  mesh.SetMacType("RandomStart", TimeValue(Seconds(0.1)));
+  mesh.SetNumberOfInterfaces(1);
+
+  NetDeviceContainer meshDevices;
+  meshDevices.Add( mesh.Install(phy, meshNode));
+  meshDevices.Add(mesh.Install(phy, csmaNodes.Get(1)));
+
+  MobilityHelper mobility;
+  Ptr<ListPositionAllocator> positionAlloc = CreateObject<ListPositionAllocator> ();
+    positionAlloc->Add (Vector (0.0, 25.0, 0.0));
+    positionAlloc->Add (Vector (50.0, 50.0, 0.0));
+    positionAlloc->Add (Vector (100.0, 50.0, 0.0));
+    mobility.SetPositionAllocator(positionAlloc);
+
+  mobility.Install(csmaNodes);
+  mobility.Install(meshNode);
+
+  Ipv4AddressHelper addr;
+  addr.SetBase("10.0.1.0","255.255.255.0");
+  Ipv4InterfaceContainer csmaIntf;
+  csmaIntf = addr.Assign(csmaDevices);
+  Ipv4InterfaceContainer meshIntf;
+  meshIntf = addr.Assign(meshDevices);
+
+  UdpEchoServerHelper echoServer(9);
+
+  ApplicationContainer serverApps = echoServer.Install(meshNode);
+  serverApps.Start(Seconds(1.0));
+  serverApps.Stop(Seconds(10.0));
+
+  UdpEchoClientHelper echoClient(meshIntf.GetAddress(1), 9);
+  echoClient.SetAttribute("MaxPackets", UintegerValue(2));
+  echoClient.SetAttribute("Interval", TimeValue(Seconds(1.0)));
+  echoClient.SetAttribute("PacketSize", UintegerValue(1024));
+
+  ApplicationContainer clientApps = echoClient.Install(csmaNodes.Get(0));
+  clientApps.Start(Seconds(2.0));
+  clientApps.Stop(Seconds(10.0));
+
+  csma.EnablePcapAll("pcap/csma-mesh");
+  phy.EnableAsciiAll("pcap/csma-mesh");
+
+  //AsciiTraceHelper ascii;
+  //csma.EnableAsciiAll(ascii.CreateFileStream("tr/csma-mesh.tr"));
+
+  AnimationInterface anim("xml/csma-mesh.xml");
+
+  Simulator::Stop(Seconds(10));
+
+  Simulator::Run();
+  Simulator::Destroy();
+  
+  return 0;
+
+
+}

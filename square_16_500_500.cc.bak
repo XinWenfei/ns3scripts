@@ -1,0 +1,98 @@
+/*
+ * This is a simulation that consists of
+ * 16 nodes, installing constant mobility
+ * model to them, then selecting two gateways
+ * which will be installed ** route protocol.
+ * The simulation scene is a square(500m × 500m)
+ * -----------------------------------
+ * |    						     |        
+ * |	*	  *	    *	  *      *   |     		 
+ * |        					     |       
+ * |							     |       
+ * |	*	  *	    *	  *		 *   |       
+ * |							     |       
+ * |							     |       
+ * |	*	  *	    g	  *		 *   |       
+ * |							     |       
+ * |							     |       
+ * |	*	  *	    *	  *		 *   |       
+ * |							     |       
+ * |                                 |
+ * |    *	  *	    *	  *		 *   |
+ * -----------------------------------
+ *
+ *
+ * */
+#include "ns3/core-module.h"
+#include "ns3/internet-module.h"
+#include "ns3/network-module.h"
+#include "ns3/mobility-module.h"
+#include "ns3/applications-module.h"
+#include "ns3/netanim-module.h"
+#include "ns3/wifi-module.h"
+#include "ns3/wifi-remote-station-manager.h"
+
+using namespace ns3;
+
+NS_LOG_COMPONENT_DEFINE("SquareExample");
+
+int main(int argc, char* argv[])
+{
+	Time::SetResolution (Time::NS);
+    LogComponentEnable ("SquareExample", LOG_LEVEL_INFO);
+    LogComponentEnable ("PacketSink", LOG_LEVEL_INFO);
+
+    uint32_t nNodes = 25;
+    NodeContainer nodecontainer;
+    nodecontainer.Create(nNodes);
+
+    //NodeContainer gwc;
+    //gwc.Add(nodecontainer.Get(12));
+    //gwc.Add(nodecontainer.Get(10));
+
+
+    YansWifiChannelHelper wifiChannel = YansWifiChannelHelper::Default();
+    YansWifiPhyHelper phy = YansWifiPhyHelper::Default();
+    phy.SetChannel(wifiChannel.Create());
+
+    enum ProtectionMode
+	{
+    	RTS_CTS,
+    	CTS_TO_SELF
+	};
+    WifiHelper wifi;
+    wifi.SetStandard(WIFI_PHY_STANDARD_80211n_2_4GHZ);
+    wifi.SetRemoteStationManager("ns3::ConstantRateWifiManager",
+    		"DataMode", 		        StringValue("OfdmRate54Mbps"),
+			"ControlMode", 		        StringValue("OfdmRate54Mbps"),
+			"IsLowLatency", 	        BooleanValue(false),
+			"MaxSsrc",			        UintegerValue(7),
+			"MaxSlrc",			        UintegerValue(7),
+			"FragmentationThreshold",   UintegerValue(2346),
+			"NonUnicastMode",			StringValue("OfdmRate54Mbps"),
+			"HtProtectionMode",			EnumValue(CTS_TO_SELF)
+			);
+
+    Ptr<Ssid> ptr_ssid = CreateObject<Ssid>();
+    Ssid ssidgw1 = Ssid("ns3-gw1");
+    //Ssid ssidgw2 = Ssid("ns3-gw2");
+
+    ptr_ssid = &ssidgw1;
+
+    NqosWifiMacHelper mac = NqosWaveMacHelper::Default();
+    mac.SetType("ns3::ApWifiMac",
+    		"QosSupported", 		BooleanValue(false),
+			"CtsTimeout", 			TimeValue(NanoSeconds(75000)),
+    		"AckTimeout", 			TimeValue(NanoSeconds(75000)),
+			"Sifs", 				TimeValue(MicroSeconds(10)),
+			"Slot", 				TimeValue(MicroSeconds(9)),
+			"MaxPropagationDelay", 	TimeValue(NanoSeconds(3000)),
+			"Ssid", 				SsidValue(ptr_ssid));
+
+    wifi.Install(phy, mac, nNodes.Get(12));
+    //ptr_ssid = &ssidgw2;
+    //wifi.Install(phy, mac, gwc.Get(1));
+
+
+}
+

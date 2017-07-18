@@ -1,0 +1,271 @@
+/**
+  * By Luis Miguel Cortes-Pena
+  * http://users.ece.gatech.edu/~cortes
+  */
+#include <fstream>
+#include "ns3/core-module.h"
+#include "ns3/point-to-point-module.h"
+#include "ns3/network-module.h"
+#include "ns3/applications-module.h"
+#include "ns3/wifi-module.h"
+#include "ns3/mobility-module.h"
+#include "ns3/csma-module.h"
+#include "ns3/internet-module.h"
+#include "ns3/netanim-module.h"
+#include "ns3/config-store.h"
+#include "ns3/propagation-delay-model.h"
+#include "ns3/aodv-routing-protocol.h"
+#include "ns3/aodv-helper.h"
+#include "ns3/olsr-helper.h"
+#include "ns3/ipv4-static-routing-helper.h"
+#include "ns3/ipv4-list-routing-helper.h"
+#include <string.h>
+#include "ns3/netanim-module.h"
+#include <time.h>
+
+using namespace ns3;
+
+/*
+  Define the following to only send nPackets
+  Otherwise, send as much as possible
+*/
+#define COUNTED_PACKETS
+
+/*
+  Define LINE_TOPOLOGY to place nodes on a line with
+  90 meter separation. Otherwise they are randomly
+  placed in a map sized mapX by mapY
+*/
+#define LINE_TOPOLOGY
+
+NS_LOG_COMPONENT_DEFINE ("wifi-mesh-example");
+
+int main (int argc, char *argv[])
+{
+  clock_t start;
+  clock_t finish;
+  double diff;
+  double simtime = 1.0;   // Run applications for this long
+  double appstart = 50.0; // Start after OLSR Converges
+  double endtime = appstart+simtime;
+  uint16_t port = 200;
+#ifdef COUNTED_PACKETS
+  uint32_t nPackets = 1; //number of packets to send
+#endif
+  uint32_t nNodes = 3;     //Total Nodes in WMN including Gateways+Clients
+  uint32_t nGateways = 1;  //Number of Gateways to Internet
+  uint32_t nClients = 1;   //Number of Clients accesing the Internet
+  uint32_t nOtherNodes = nNodes    //Number of WifiMesh Routers
+                        -nGateways //(those that only forward packets)
+                        -nClients;
+
+#ifndef LINE_TOPOLOGY
+  double mapX = 10;
+  double mapY = 100;
+#endif
+
+  CommandLine cmd;
+  cmd.Parse (argc, argv);
+  
+  //LogComponentEnable("UdpEchoClientApplication", LogLevel(LOG_LEVEL_ALL | LOG_PREFIX_FUNC | LOG_PREFIX_TIME)); 
+/*
+  LogComponentEnable("AdhocWifiMac", LogLevel(LOG_LEVEL_ALL | LOG_PREFIX_FUNC | LOG_PREFIX_TIME)); 
+  LogComponentEnable("MacLow", LogLevel(LOG_LEVEL_ALL | LOG_PREFIX_FUNC | LOG_PREFIX_TIME));
+  LogComponentEnable("ArpL3Protocol", LogLevel(LOG_LEVEL_ALL | LOG_PREFIX_FUNC | LOG_PREFIX_TIME));
+*/
+  //LogComponentEnableAll(LogLevel(LOG_LEVEL_DEBUG | LOG_PREFIX_FUNC | LOG_PREFIX_TIME));
+
+  LogComponentEnable("wifi-mesh-example", LogLevel(LOG_LEVEL_ALL | LOG_PREFIX_FUNC | LOG_PREFIX_TIME));
+
+#ifdef COUNTED_PACKETS
+  LogComponentEnable("UdpEchoClientApplication", LogLevel( LOG_LEVEL_ALL | LOG_PREFIX_FUNC | LOG_PREFIX_TIME));
+  LogComponentEnable("UdpEchoServerApplication", LogLevel( LOG_LEVEL_ALL | LOG_PREFIX_FUNC | LOG_PREFIX_TIME));
+#else
+  //LogComponentEnable("OnOffApplication", LogLevel( LOG_LEVEL_ALL | LOG_PREFIX_FUNC | LOG_PREFIX_TIME));
+  //LogComponentEnable("PacketSink", LogLevel( LOG_LEVEL_ALL | LOG_PREFIX_FUNC | LOG_PREFIX_TIME));
+#endif
+
+  NS_LOG_INFO("Creating our Nodes and Containers");
+  //Gateways to the Internet
+  NodeContainer gwNodes;
+  gwNodes.Create (nGateways);
+  
+  //All Mesh Nodes
+  NodeContainer meshNodes;
+  meshNodes.Add (gwNodes);
+  meshNodes.Create (nOtherNodes);
+  
+  //Mesh Clients
+  NodeContainer clientNodes;
+  clientNodes.Create(nClients);
+
+  // Finished, adding rest of ALL Nodes
+  meshNodes.Add (clientNodes);
+
+  //The supper fast CSMA Network (the Internet)
+  NodeContainer csmaNodes;
+  csmaNodes.Create (1); //One internet server
+  csmaNodes.Add(gwNodes);
+
+  //Keep our Internet Node
+  NodeContainer internetNode;
+  internetNode.Add(csmaNodes.Get (0));
+
+  NS_LOG_INFO("Creating Internet");
+  //INTERNET SETUP
+  CsmaHelper csma;
+  csma.SetChannelAttribute ("DataRate", 
+        DataRateValue (DataRate (DataRate(5000000000ull))));
+        // 5Tbits (so csma not bottleneck)
+
+  //Install the Internet Network:
+  //All Gateways+InternetNode interconnected
+  NetDeviceContainer csmaDevices;
+  csmaDevices = csma.Install(csmaNodes);
+
+  NS_LOG_INFO("Creating Wireless Mesh Network");
+  //MESH SETUP
+  Ptr<WifiChannel> channel = CreateObject<WifiChannel> ();
+  channel->SetPropagationDelayModel (
+    CreateObject<ConstantSpeedPropagationDelayModel> ());
+
+  Ptr<LogDistancePropagationLossModel> log =
+    CreateObject<LogDistancePropagationLossModel> ();
+
+  log->SetReferenceModel (CreateObject<FriisPropagationLossModel> ());
+
+  channel->SetPropagationLossModel(log);
+
+  WifiHelper wifi;
+  wifi.SetPhy("ns3::WifiPhy");
+  wifi.SetMac("ns3::AdhocWifiMac");
+  wifi.SetRemoteStationManager ("ns3::ArfWifiManager",
+    "RtsCtsThreshold",StringValue("0")); //Enable RTS/CTS for every packet
+
+  //Install nodes in the Wireless Mesh Network
+  NetDeviceContainer wifiDevices;
+  wifiDevices = wifi.Install (meshNodes, channel);
+
+  //Now to position our nodes for multihop
+  MobilityHelper mobility;
+#ifdef LINE_TOPOLOGY
+  NS_LOG_INFO("Placing nodes evenly");
+  Ptr<ListPositionAllocator> posAlloc = 
+    CreateObject<ListPositionAllocator> ();
+  double x = 0.0;
+  for (uint32_t i = 0; i < nNodes; ++i)
+    {
+      posAlloc->Add (Vector (x, 0.0, 0.0));
+      x += 90.0; //To make sure they are aligned
+    }
+#else
+  NS_LOG_INFO("Placing nodes randomly in "<<mapX<<"x"<<mapY<<" map");
+  Ptr<RandomRectanglePositionAllocator> posAlloc = CreateObject<RandomRectanglePositionAllocator> ();
+  posAlloc->SetX(RandomVariable(UniformVariable(0,mapX)));
+  posAlloc->SetY(RandomVariable(UniformVariable(0,mapY)));
+#endif
+
+  //Give the positions to the mobility
+  mobility.SetPositionAllocator(posAlloc);
+  //WMN are usually static
+  mobility.SetMobilityModel("ns3::StaticMobilityModel");
+  //Give everybody their positions
+  mobility.Install(meshNodes);
+
+  NS_LOG_INFO("Installing Internet Stack");
+  //Setup the internet stack on all nodes
+  InternetStackHelper stack;
+  stack.Install (meshNodes);
+  stack.Install (internetNode);
+
+  NS_LOG_INFO("Setting up IP-Addresses");
+  //Addresses Setup
+  Ipv4AddressHelper address;
+  //Our mesh nodes need to be in different subnets
+  //so that ARP does not assume that a gateway is one hop away
+  //so they need /32 addresses
+  address.SetBase("192.168.0.0","255.255.255.255");
+
+  //Assign IPs to all MeshNodes
+  Ipv4InterfaceContainer wifiInterfaces;
+  wifiInterfaces = address.Assign (wifiDevices);
+
+  //Assign IPs to our Internet Network
+  address.SetBase("172.16.0.0","255.255.255.0");
+  Ipv4InterfaceContainer csmaInterfaces;
+  csmaInterfaces = address.Assign (csmaDevices);
+
+  NS_LOG_INFO ("Enabling OLSR routing on all nodes");
+  OlsrHelper olsr;
+  olsr.Install(meshNodes);
+  olsr.Install(internetNode);
+
+#ifndef COUNTED_PACKETS
+
+  NS_LOG_INFO("Creating Apps to Congest Network");
+  //Build Clients' App (to congest the network)
+  OnOffHelper onoff ("ns3::UdpSocketFactory",
+      InetSocketAddress(csmaInterfaces.GetAddress (0),port));
+  onoff.SetAttribute ("OnTime", RandomVariableValue (ConstantVariable (endtime)));
+  onoff.SetAttribute ("OffTime", RandomVariableValue (ConstantVariable (0)));
+  onoff.SetAttribute ("DataRate", DataRateValue (DataRate (600000000ull)));
+  onoff.SetAttribute ("PacketSize", UintegerValue (512));
+
+  //Build InternetNode's App (RX only)
+  PacketSinkHelper sink ("ns3::UdpSocketFactory",
+      InetSocketAddress(Ipv4Address::GetAny (), port));
+
+#else
+
+  NS_LOG_INFO("Creating Apps to send "<<nPackets<<" packet(s)");
+  //Build Clients's App (only send nPackets, for debugging)
+  UdpEchoClientHelper onoff(csmaInterfaces.GetAddress (0), port);
+  onoff.SetAttribute ("MaxPackets", UintegerValue (nPackets));
+  onoff.SetAttribute ("Interval", TimeValue (Seconds (1.0)));
+  onoff.SetAttribute ("PacketSize", UintegerValue (1024));
+
+  //Build the Server's App to respond to Client's
+  UdpEchoServerHelper sink(port);
+
+#endif
+
+  //Install our Internet App
+  ApplicationContainer internetApp = sink.Install(internetNode);
+
+  //Install client apps
+  ApplicationContainer clientApps = onoff.Install (clientNodes);
+  NS_LOG_INFO("Number of applications are: " << clientApps.GetN());
+
+  NS_LOG_INFO("Setting Apps Start/End Times");
+  //Want appstart to be large enough so OLSR gets to converge
+  clientApps.Start(Seconds(appstart));
+  clientApps.Stop (Seconds(endtime));
+  internetApp.Start (Seconds (appstart));
+  internetApp.Stop (Seconds (endtime));
+
+  //Set our stop time
+  Simulator::Stop (Seconds (endtime));
+
+  NS_LOG_INFO ("Configure Tracing.");
+  std::ofstream ascii;
+  ascii.open ("tr/wifi-mesh-example.tr");
+  WifiHelper::EnableAsciiAll (ascii);
+  CsmaHelper::EnableAsciiAll (ascii);
+  CsmaHelper::EnablePcapAll("pcap/wifi-mesh-example");
+  WifiHelper::EnablePcapAll("pcap/wifi-mesh-example");
+  AnimationInterface anim("xml/wifi-mesh.xml");
+
+  NS_LOG_INFO("Running Simulation...");
+  //Do this to measure execution time
+  start = clock();
+  //Run our simulation
+  Simulator::Run();
+  //Find out how long our simulation took
+  finish = clock();
+  diff = ((double)finish-(double)start)/ CLOCKS_PER_SEC;
+  NS_LOG_INFO("Simulation finished in " << diff << " secs");
+
+  //Finish
+  Simulator::Destroy();
+  return 0;
+}
