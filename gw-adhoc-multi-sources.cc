@@ -109,6 +109,7 @@
 #include <string>
 
 using namespace ns3;
+using namespace std;
 
 NS_LOG_COMPONENT_DEFINE ("WifiSimpleAdhocGrid");
 
@@ -134,20 +135,28 @@ void Rx(std::string context, Ptr<const Packet> packet, Ptr<Ipv4> ipv4, uint32_t 
     std::cout<<ipv4->GetAddress(1,0).GetLocal()<<" recv a packet!"<<std::endl;
 }
 
-static void GenerateTraffic (Ptr<Socket> socket, uint32_t pktSize, 
+static void GenerateTraffic (std::vector< Ptr<Socket> > sources, uint32_t pktSize, 
                              uint32_t pktCount, Time pktInterval )
 {
+  // cout<<sources.size()<<endl;
   if (pktCount > 0)
     {
-        int sendbytes = socket->Send (Create<Packet> (pktSize));
+      for(std::vector< Ptr<Socket> >::iterator socket=sources.begin(); socket!=sources.end(); ++socket){
+        int sendbytes = (*socket)->Send (Create<Packet> (pktSize));
         //sendCb(socket, socket->GetTxAvailable());
-      //std::cout<<"Send "<<sendbytes<<" bytes!"<<std::endl;
+        // std::cout<<"Send "<<sendbytes<<" bytes!"<<std::endl;
+      } 
       Simulator::Schedule (pktInterval, &GenerateTraffic, 
-                           socket, pktSize,pktCount-1, pktInterval);
+                           sources, pktSize,pktCount-1, pktInterval);
     }
   else
     {
-      socket->Close ();
+      std::vector< Ptr<Socket> >::iterator socket = sources.begin();
+      while(socket != sources.end()){
+        (*socket)->Close ();  
+        socket++;
+      }
+      
     }
 }
 
@@ -159,13 +168,14 @@ int main (int argc, char *argv[])
   double distance = 200;  // m
   double distance2= 600;
   uint32_t packetSize = 1000; // bytes
-  uint32_t numPackets = 10;
+  uint32_t numPackets = 5;
   uint32_t numStaNodes = 16;  
   uint32_t numGwNodes = 1;
-  uint32_t sinkNode = 0;
-  uint32_t sourceNode = 0;
-  uint32_t simTime = 45;
-  uint32_t routeTime = 30;
+  uint32_t sinkNode = 0;      //node id
+  uint32_t sourceNode = 0;    //node id
+  uint32_t simTime = 100;      //simulation time
+  uint32_t routeTime = 30;    //route connection's time
+  uint32_t numSource = 4;     //number of source node
   double interval = 1.0; // seconds
   bool verbose = false;
   bool tracing = true;
@@ -272,8 +282,8 @@ int main (int argc, char *argv[])
   Ipv4AddressHelper ipv4;
   //NS_LOG_INFO ("Assign IP Addresses.");
   ipv4.SetBase ("10.1.1.0", "255.255.255.0");
-  Ipv4InterfaceContainer i = ipv4.Assign (sta_devices);
-  i.Add( ipv4.Assign(gw_devices));
+  Ipv4InterfaceContainer ipv4Intf = ipv4.Assign (sta_devices);
+  ipv4Intf.Add( ipv4.Assign(gw_devices));
 
   TypeId tid = TypeId::LookupByName ("ns3::UdpSocketFactory");
   Ptr<Socket> recvSink = Socket::CreateSocket (gw_nc.Get (sinkNode), tid);
@@ -281,9 +291,17 @@ int main (int argc, char *argv[])
   recvSink->Bind (local);
   // recvSink->SetRecvCallback (MakeCallback (&SocketReceivePacket));
 
-  Ptr<Socket> source = Socket::CreateSocket (sta_nc.Get (sourceNode), tid);
-  InetSocketAddress remote = InetSocketAddress (i.GetAddress (numStaNodes, 0), 80);
-  source->Connect (remote);
+  // create the sources, number indicates the node's id
+  int sourceNodeArray[] = {0, 3, 12, 15};
+  std::vector< Ptr<Socket> > sources;
+  for(int i=0; i<numSource; ++i)
+  {
+    // cout<<i<<endl;
+    Ptr<Socket> source = Socket::CreateSocket (sta_nc.Get (sourceNodeArray[i]), tid);
+    InetSocketAddress remote = InetSocketAddress (ipv4Intf.GetAddress (numStaNodes, 0), 80);
+    source->Connect (remote);
+    sources.push_back(source);
+  }
 
   if (tracing == true)
     {
@@ -303,7 +321,7 @@ int main (int argc, char *argv[])
 
   // Give OLSR time to converge-- 30 seconds perhaps
   Simulator::Schedule (Seconds (routeTime), &GenerateTraffic, 
-                       source, packetSize, numPackets, interPacketInterval);
+                       sources, packetSize, numPackets, interPacketInterval);
 
   // Output the xml file
   AnimationInterface anim("./xml/gw-adhoc.xml");
